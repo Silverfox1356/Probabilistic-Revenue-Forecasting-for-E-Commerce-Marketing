@@ -52,8 +52,10 @@ PROVIDERS = {"ANTHROPIC_API_KEY": _anthropic, "GEMINI_API_KEY": _gemini, "OPENAI
 def generate_insights(df, forecast):
     monthly = df.groupby([df["date"].dt.to_period("M"), "channel"])[["spend", "revenue"]].sum()
     monthly["roas"] = (monthly["revenue"] / monthly["spend"]).round(2)
-    prompt = PROMPT.format(history=monthly.round(0).to_string(),
-                           forecast=json.dumps(forecast, indent=1))
+    prompt = PROMPT.format(
+        history=f"(data ends {df['date'].max().date()}; the final month is partial)\n"
+                + monthly.round(0).to_string(),
+        forecast=json.dumps(forecast, indent=1))
     for env, call in PROVIDERS.items():
         if key := os.environ.get(env):
             return call(prompt, key)
