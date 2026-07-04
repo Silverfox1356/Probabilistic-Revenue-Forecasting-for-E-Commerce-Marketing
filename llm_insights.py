@@ -1,16 +1,12 @@
-"""AI-assisted causal summary, anomaly interpretation, and risk identification."""
 import json
 import os
 import urllib.request
 
-API_URL = "https://api.anthropic.com/v1/messages"
-MODEL = "claude-sonnet-4-6"
-
 PROMPT = """You are a senior ecommerce marketing analyst. Given the historical summary and
 probabilistic forecast below, write a concise business briefing with three sections:
-1. Causal drivers — why revenue/ROAS is expected to move (seasonality, spend shifts, channel mix).
-2. Anomalies — unusual patterns in the historical data worth investigating.
-3. Operational risks — concrete risks to the forecast and mitigations.
+1. Causal drivers - why revenue/ROAS is expected to move (seasonality, spend shifts, channel mix).
+2. Anomalies - unusual patterns in the historical data worth investigating.
+3. Operational risks - concrete risks to the forecast and mitigations.
 Be specific, reference numbers, and avoid generic advice.
 
 HISTORICAL SUMMARY:
@@ -20,23 +16,45 @@ FORECAST:
 {forecast}"""
 
 
-def historical_summary(df):
-    monthly = df.groupby([df["date"].dt.to_period("M"), "channel"])[["spend", "revenue"]].sum()
-    monthly["roas"] = (monthly["revenue"] / monthly["spend"]).round(2)
-    return monthly.round(0).to_string()
+def _post(url, payload, headers):
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json", **headers})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.load(resp)
+
+
+def _anthropic(prompt, key):
+    data = _post("https://api.anthropic.com/v1/messages",
+                 {"model": "claude-sonnet-4-6", "max_tokens": 1000,
+                  "messages": [{"role": "user", "content": prompt}]},
+                 {"x-api-key": key, "anthropic-version": "2023-06-01"})
+    return "".join(b.get("text", "") for b in data["content"])
+
+
+def _gemini(prompt, key):
+    data = _post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                 {"contents": [{"parts": [{"text": prompt}]}]},
+                 {"x-goog-api-key": key})
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
+def _openai(prompt, key):
+    data = _post("https://api.openai.com/v1/chat/completions",
+                 {"model": "gpt-4o-mini", "max_tokens": 1000,
+                  "messages": [{"role": "user", "content": prompt}]},
+                 {"Authorization": f"Bearer {key}"})
+    return data["choices"][0]["message"]["content"]
+
+
+PROVIDERS = {"ANTHROPIC_API_KEY": _anthropic, "GEMINI_API_KEY": _gemini, "OPENAI_API_KEY": _openai}
 
 
 def generate_insights(df, forecast):
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    prompt = PROMPT.format(history=historical_summary(df), forecast=json.dumps(forecast, indent=1))
-    if not key:
-        return "[LLM insights skipped: set ANTHROPIC_API_KEY]\n\nPrompt prepared:\n" + prompt[:500]
-    req = urllib.request.Request(
-        API_URL,
-        data=json.dumps({"model": MODEL, "max_tokens": 1000,
-                         "messages": [{"role": "user", "content": prompt}]}).encode(),
-        headers={"Content-Type": "application/json", "x-api-key": key,
-                 "anthropic-version": "2023-06-01"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.load(resp)
-    return "".join(b.get("text", "") for b in data["content"])
+    monthly = df.groupby([df["date"].dt.to_period("M"), "channel"])[["spend", "revenue"]].sum()
+    monthly["roas"] = (monthly["revenue"] / monthly["spend"]).round(2)
+    prompt = PROMPT.format(history=monthly.round(0).to_string(),
+                           forecast=json.dumps(forecast, indent=1))
+    for env, call in PROVIDERS.items():
+        if key := os.environ.get(env):
+            return call(prompt, key)
+    return "[No API key set: ANTHROPIC_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY]\n\nPrepared prompt:\n\n" + prompt
