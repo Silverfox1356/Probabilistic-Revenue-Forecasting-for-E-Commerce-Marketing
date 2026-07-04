@@ -66,6 +66,20 @@ ax2.pie(contrib.values(), labels=contrib.keys(), autopct="%1.1f%%")
 ax2.set_title("Revenue contribution")
 col_b.pyplot(fig2)
 
+daily = df.groupby("date")["revenue"].sum().rolling(7).mean()
+future = pd.date_range(df["date"].max(), periods=horizon + 1)
+fig3, ax3 = plt.subplots(figsize=(10, 3))
+ax3.plot(daily.index, daily.values, color="#4C78A8", label="7-day avg daily revenue")
+ax3.fill_between(future, agg["revenue"]["p10"] / horizon, agg["revenue"]["p90"] / horizon,
+                 color="#F58518", alpha=0.3, label="forecast P10-P90 (daily rate)")
+ax3.plot(future, [agg["revenue"]["p50"] / horizon] * len(future), "--", color="#F58518")
+ax3.legend()
+ax3.set_title("Revenue history and forecast band")
+st.pyplot(fig3)
+
+with st.expander("Backtest — last 30 days held out"):
+    st.dataframe(pd.DataFrame(forecaster.backtest(df)), use_container_width=True)
+
 tab1, tab2 = st.tabs(["Campaign types", "Campaigns"])
 tab1.dataframe(pd.json_normalize(result["levels"]["campaign_type"]), use_container_width=True)
 tab2.dataframe(pd.json_normalize(result["levels"]["campaign"]), use_container_width=True)

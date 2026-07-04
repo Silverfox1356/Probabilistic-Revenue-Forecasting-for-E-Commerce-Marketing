@@ -110,3 +110,18 @@ def run_forecast(df, horizon_days=30, channel_budgets=None):
         "revenue_contribution_pct": {r["channel"]: round(100 * r["revenue"]["p50"] / rev["p50"], 1)
                                      for r in ch if rev["p50"]}}
     return out
+
+
+def backtest(df, horizon_days=30):
+    cutoff = df["date"].max() - pd.Timedelta(days=horizon_days)
+    train, test = df[df["date"] <= cutoff], df[df["date"] > cutoff]
+    rows = []
+    for ch, g in _active(train).groupby("channel"):
+        pred = forecast_entity(g, horizon_days)["revenue"]
+        actual = float(test.loc[test["channel"] == ch, "revenue"].sum())
+        rows.append({"channel": ch, "actual": round(actual, 2), **pred,
+                     "within_p10_p90": pred["p10"] <= actual <= pred["p90"]})
+    total = {k: round(sum(r[k] for r in rows), 2) for k in ("actual", "p10", "p50", "p90")}
+    rows.append({"channel": "TOTAL", **total,
+                 "within_p10_p90": total["p10"] <= total["actual"] <= total["p90"]})
+    return rows
