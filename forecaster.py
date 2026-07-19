@@ -59,23 +59,52 @@ def _elasticity(g):
     return float(np.clip(np.polyfit(np.log(d["spend"]), np.log(d["revenue"]), 1)[0], 0.3, 1.0))
 
 
+def _month_factors(daily):
+    """Month-of-year seasonality: mean ratio of daily revenue to its 365-day
+    centered trend, per calendar month. The long window is what captures the
+    Nov/Dec holiday surge — a short window would track the surge itself and
+    cancel out the very seasonality we need. Falls back to no seasonality
+    (all 1.0) for series too short to estimate a full year."""
+    trend = daily.rolling(365, center=True, min_periods=120).mean()
+    ratio = (daily / trend).replace([np.inf, -np.inf], np.nan).dropna()
+    if daily.tail(90).mean() <= 0 or len(ratio) < 180:
+        return pd.Series(1.0, index=range(1, 13))
+    factors = ratio.groupby(ratio.index.month).mean().clip(0.3, 4.0)
+    return factors.reindex(range(1, 13), fill_value=1.0)
+
+
+def _bootstrap_noise(resid, horizon_days, rng):
+    """Moving-block bootstrap (weekly blocks) of daily residuals, so simulated
+    paths preserve short-term autocorrelation instead of assuming independent
+    days (which understates horizon-sum uncertainty)."""
+    if len(resid) < 14:
+        return rng.choice(resid, (N_SIMS, horizon_days)) if len(resid) else np.zeros((N_SIMS, horizon_days))
+    starts = rng.integers(0, len(resid) - 7 + 1, (N_SIMS, horizon_days // 7 + 1))
+    blocks = [resid[s[:, None] + np.arange(7)] for s in starts.T]
+    return np.concatenate(blocks, axis=1)[:, :horizon_days]
+
+
 def forecast_entity(g, horizon_days, budget=None, rng=None):
     rng = rng or np.random.default_rng(42)
     daily = g.groupby("date")["revenue"].sum().asfreq("D", fill_value=0.0)
-    recent = daily.tail(90)
+    factors = _month_factors(daily)
+    # Deseasonalize before estimating the level, so the recent-window mean is
+    # not distorted by where the holiday peak happens to fall in the window.
+    deseason = daily.values / factors.reindex(daily.index.month).values
+    recent = deseason[-90:]
     base = recent.mean()
     future = pd.date_range(daily.index.max() + pd.Timedelta(days=1), periods=horizon_days)
-    factors = np.ones(horizon_days)
-    trend = daily.rolling(28, center=True, min_periods=14).mean()
-    ratio = (daily / trend).replace([np.inf, -np.inf], np.nan).dropna()
-    if base > 0 and len(ratio) >= 28:
-        dow = ratio.groupby(ratio.index.dayofweek).mean()
-        month = ratio.groupby(ratio.index.month).mean()
-        factors = dow.reindex(future.dayofweek, fill_value=1.0).values * \
-                  np.clip(month.reindex(future.month, fill_value=1.0).values, 0.5, 2.0)
-    expected = (base * factors).sum()
-    resid = recent.values - base
-    sims = np.maximum(expected + rng.choice(resid, (N_SIMS, horizon_days)).sum(axis=1), 0)
+    future_factors = factors.reindex(future.month).values
+
+    # Two uncertainty sources, both re-seasonalized onto the forecast window:
+    #   level uncertainty  — standard error of the mean, with a weekly-block
+    #                        effective sample size to reflect autocorrelation;
+    #   day-to-day noise   — block bootstrap of deseasonalized residuals.
+    standard_error = recent.std() / np.sqrt(len(recent) / 7) if len(recent) > 1 else 0.0
+    base_sims = base + rng.normal(0, standard_error, N_SIMS)[:, None]
+    noise = _bootstrap_noise(recent - base, horizon_days, rng)
+    sims = np.maximum(((base_sims + noise) * future_factors).sum(axis=1), 0)
+
     spend = g.groupby("date")["spend"].sum().reindex(daily.index, fill_value=0.0).tail(90).mean() * horizon_days
     if budget is not None and spend > 0:
         sims = sims * (budget / spend) ** _elasticity(g)

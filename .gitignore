@@ -1,4 +1,10 @@
+# Ignore CSVs by default (held-out test data, generated features/predictions),
+# but commit the three sample channel exports so the repo runs out of the box.
 *.csv
+!data/google_ads_campaign_stats.csv
+!data/bing_campaign_stats.csv
+!data/meta_ads_campaign_stats.csv
+output/
 forecast_output.json
 __pycache__/
 .streamlit/secrets.toml

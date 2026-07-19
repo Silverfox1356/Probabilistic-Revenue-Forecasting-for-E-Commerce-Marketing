@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings so run.sh works on the Linux test machine.
+*.sh text eol=lf
+# Leave data files byte-for-byte as committed (no line-ending conversion).
+*.csv -text
