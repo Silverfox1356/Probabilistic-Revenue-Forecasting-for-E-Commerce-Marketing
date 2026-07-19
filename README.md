@@ -72,7 +72,9 @@ Null/negative metrics, campaigns mapped to multiple types within a channel, and 
 
 ## AI integration strategy
 
-The LLM layer (Anthropic API) receives a monthly channel-level historical summary plus the forecast JSON and returns a three-part briefing: causal drivers, anomalies, and operational risks. The LLM interprets statistical output but never produces the numbers, keeping forecasts deterministic and reproducible (fixed random seed).
+The LLM layer receives a monthly channel-level historical summary plus the forecast JSON and returns a three-part briefing: causal drivers, anomalies, and operational risks. It interprets the statistical output but never produces the numbers, so forecasts stay deterministic and reproducible (fixed seed).
+
+**Keys and cost.** The scored pipeline (`run.sh` → `predictions.csv`) is fully offline and makes **no API calls** — per the submission guide's "no network calls at run time" rule, no key is ever needed to reproduce the forecasts. AI insights are a separate, on-demand feature that reads the key from the environment (`ANTHROPIC_API_KEY`, then `GEMINI_API_KEY`, then `OPENAI_API_KEY`), so whoever runs the demo supplies their own — Google Gemini has a free tier that works out of the box. When no key is set, the app shows a pre-generated example ([sample_insight.md](sample_insight.md)) so the AI deliverable is visible without a key.
 
 ## Assumptions and limitations
 
